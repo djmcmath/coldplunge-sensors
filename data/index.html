@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cold Plunge Sensor Data</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        .summary {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            max-width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>Cold Plunge Temperature & Flow Rate</h1>
+    <div class="summary" id="summary">Loading...</div>
+    <label>
+        <input type="checkbox" id="unitToggle"> Show in Fahrenheit
+    </label>
+    <canvas id="tempChart" width="400" height="200"></canvas>
+    <canvas id="flowChart" width="400" height="200"></canvas>
+    <script>
+        let showFahrenheit = false;
+
+        document.getElementById('unitToggle').addEventListener('change', function() {
+            showFahrenheit = this.checked;
+            fetchData(); // Refresh the chart with the selected unit
+        });
+
+        function convertUtcToLocal(utcTimestamp) {
+            let date = new Date(utcTimestamp * 1000); // Convert UNIX seconds to milliseconds
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); // Convert to user's local time
+        }
+
+        async function fetchData() {
+            const response = await fetch('/data');
+            const json = await response.json();
+            
+            // Filter out erroneous temperature readings (-1)
+            const validReadings = json.readings.filter(d => d.temperature !== -1);
+            
+            const timestamps = validReadings.map(d => convertUtcToLocal(d.timestamp));
+            let temperatures = validReadings.map(d => d.temperature);
+            if (showFahrenheit) {
+                temperatures = temperatures.map(c => (c * 9/5) + 32); // Convert to Fahrenheit
+            }
+            const flowRates = validReadings.map(d => d.flowRate);
+            
+            // Update summary block with latest values
+            const latestTemp = temperatures.length > 0 ? temperatures[temperatures.length - 1].toFixed(1) : 'N/A';
+            const latestFlow = flowRates.length > 0 ? flowRates[flowRates.length - 1].toFixed(1) : 'N/A';
+            document.getElementById('summary').innerHTML = `<div>Temperature: ${latestTemp} ${showFahrenheit ? '&deg;F' : '&deg;C'}</div><br><div>Flow: ${latestFlow} L/min</div>`;
+            
+            updateChart(tempChart, timestamps, temperatures, showFahrenheit ? 'Temperature (&deg;F)' : 'Temperature (&deg;C)', 0, 15, showFahrenheit ? 32 : 0);
+            updateChart(flowChart, timestamps, flowRates, 'Flow Rate (L/min)', 0, 70, 0);
+        }
+        
+        function updateChart(chart, labels, data, label, minDefault, maxDefault, minOverride) {
+            let maxValue = Math.max(...data);
+            let suggestedMax = maxValue > maxDefault ? maxValue * 1.1 : maxDefault;
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = data;
+            chart.data.datasets[0].label = label;
+            if (chart.data.datasets.length > 1) {
+                chart.data.datasets[1].data = Array(labels.length).fill(12);
+            }
+            chart.options.scales.y = {
+                beginAtZero: false,
+                min: minOverride,
+                max: suggestedMax
+            };
+            chart.update();
+        }
+
+        const tempChart = new Chart(document.getElementById('tempChart').getContext('2d'), {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'Temperature (°C)', borderColor: 'red', data: [] }] },
+            options: { scales: { y: { beginAtZero: false, min: 0, max: 15 } } }
+        });
+
+        const flowChart = new Chart(document.getElementById('flowChart').getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Flow Rate (L/min)', borderColor: 'blue', data: [] },
+                    { label: '12 L/min Threshold', borderColor: 'red', borderDash: [5, 5], data: [], fill: false }
+                ]
+            },
+            options: { scales: { y: { beginAtZero: false, min: 0, max: 70 } } }
+        });
+
+        setInterval(fetchData, 15000);
+    </script>
+</body>
+</html>
